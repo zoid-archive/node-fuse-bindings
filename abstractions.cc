@@ -113,9 +113,20 @@ void thread_join (abstr_thread_t thread) {
 }
 
 int fusermount (char *path) {
+#if FUSE_USE_VERSION >= 30
+    // Try fusermount3 first for FUSE 3.x systems
+    char *argv3[] = {(char *) "fusermount3", (char *) "-q", (char *) "-u", path, NULL};
+    int result = execute_command_and_wait(argv3);
+    if (result == 0) {
+        return result;
+    }
+    // Fall back to fusermount if fusermount3 not available
     char *argv[] = {(char *) "fusermount", (char *) "-q", (char *) "-u", path, NULL};
-
     return execute_command_and_wait(argv);
+#else
+    char *argv[] = {(char *) "fusermount", (char *) "-q", (char *) "-u", path, NULL};
+    return execute_command_and_wait(argv);
+#endif
 }
 
 #endif

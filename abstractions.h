@@ -1,6 +1,16 @@
 #include <nan.h>
 
-#define FUSE_USE_VERSION 29
+// FUSE version selection:
+// - Define FUSE_USE_VERSION=35 (or 30+) before including this header for FUSE 3
+// - Default is FUSE 2.9 for maximum compatibility
+// - On systems with only libfuse3, rebuild with: CFLAGS="-DFUSE_USE_VERSION=35" npm rebuild
+#ifndef FUSE_USE_VERSION
+#  if defined(__linux__)
+#    define FUSE_USE_VERSION 35  // FUSE 3.x on Linux
+#  else
+#    define FUSE_USE_VERSION 29  // FUSE 2.x for macOS/Windows
+#  endif
+#endif
 
 #ifdef __APPLE__
 
@@ -85,7 +95,11 @@ typedef DWORD thread_fn_rtn_t;
 #include <sys/mount.h>
 
 #include <semaphore.h>
+#if FUSE_USE_VERSION >= 30
+#include <fuse3/fuse_lowlevel.h>
+#else
 #include <fuse_lowlevel.h>
+#endif
 
 #define FUSE_OFF_T off_t
 
