@@ -1,7 +1,5 @@
 #include <nan.h>
 
-#define FUSE_USE_VERSION 29
-
 #if defined(_WIN32) && _MSC_VER < 1900
 // Visual Studio 2015 adds struct timespec,
 // this #define will make Dokany define its
@@ -9,8 +7,15 @@
 #define _CRT_NO_TIME_T
 #endif
 
+#include "abstractions.h"
+
+#if FUSE_USE_VERSION >= 30
+#include <fuse3/fuse.h>
+#include <fuse3/fuse_opt.h>
+#else
 #include <fuse.h>
 #include <fuse_opt.h>
+#endif
 
 #ifndef _MSC_VER
 // Need to use FUSE_STAT when using Dokany with Visual Studio.
@@ -24,8 +29,6 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <sys/types.h>
-
-#include "abstractions.h"
 
 using namespace v8;
 
@@ -227,6 +230,7 @@ static int bindings_mknod (const char *path, mode_t mode, dev_t dev) {
   return bindings_call(b);
 }
 
+#if FUSE_USE_VERSION < 30
 static int bindings_truncate (const char *path, FUSE_OFF_T size) {
   bindings_t *b = bindings_get_context();
 
@@ -236,6 +240,26 @@ static int bindings_truncate (const char *path, FUSE_OFF_T size) {
 
   return bindings_call(b);
 }
+#else
+static int bindings_truncate (const char *path, FUSE_OFF_T size, struct fuse_file_info *fi) {
+  bindings_t *b = bindings_get_context();
+
+  // In FUSE 3, truncate handles both truncate and ftruncate
+  // If fi is provided and has a valid file handle, use ftruncate path
+  if (fi != NULL && fi->fh != 0 && b->ops_ftruncate != NULL) {
+    b->op = OP_FTRUNCATE;
+    b->path = (char *) path;
+    b->length = size;
+    b->info = fi;
+  } else {
+    b->op = OP_TRUNCATE;
+    b->path = (char *) path;
+    b->length = size;
+  }
+
+  return bindings_call(b);
+}
+#endif
 
 static int bindings_ftruncate (const char *path, FUSE_OFF_T size, struct fuse_file_info *info) {
   bindings_t *b = bindings_get_context();
@@ -248,6 +272,7 @@ static int bindings_ftruncate (const char *path, FUSE_OFF_T size, struct fuse_fi
   return bindings_call(b);
 }
 
+#if FUSE_USE_VERSION < 30
 static int bindings_getattr (const char *path, struct FUSE_STAT *stat) {
   bindings_t *b = bindings_get_context();
 
@@ -257,6 +282,26 @@ static int bindings_getattr (const char *path, struct FUSE_STAT *stat) {
 
   return bindings_call(b);
 }
+#else
+static int bindings_getattr (const char *path, struct FUSE_STAT *stat, struct fuse_file_info *fi) {
+  bindings_t *b = bindings_get_context();
+
+  // In FUSE 3, getattr handles both getattr and fgetattr
+  // If fi is provided and has a valid file handle, use fgetattr path
+  if (fi != NULL && fi->fh != 0 && b->ops_fgetattr != NULL) {
+    b->op = OP_FGETATTR;
+    b->path = (char *) path;
+    b->data = stat;
+    b->info = fi;
+  } else {
+    b->op = OP_GETATTR;
+    b->path = (char *) path;
+    b->data = stat;
+  }
+
+  return bindings_call(b);
+}
+#endif
 
 static int bindings_fgetattr (const char *path, struct FUSE_STAT *stat, struct fuse_file_info *info) {
   bindings_t *b = bindings_get_context();
@@ -301,7 +346,10 @@ static int bindings_fsyncdir (const char *path, int datasync, struct fuse_file_i
   return bindings_call(b);
 }
 
+#if FUSE_USE_VERSION < 30
 static int bindings_readdir (const char *path, void *buf, fuse_fill_dir_t filler, FUSE_OFF_T offset, struct fuse_file_info *info) {
+  (void) offset;
+  (void) info;
   bindings_t *b = bindings_get_context();
 
   b->op = OP_READDIR;
@@ -311,6 +359,21 @@ static int bindings_readdir (const char *path, void *buf, fuse_fill_dir_t filler
 
   return bindings_call_ex(b, true);
 }
+#else
+static int bindings_readdir (const char *path, void *buf, fuse_fill_dir_t filler, FUSE_OFF_T offset, struct fuse_file_info *info, enum fuse_readdir_flags flags) {
+  (void) offset;
+  (void) info;
+  (void) flags;
+  bindings_t *b = bindings_get_context();
+
+  b->op = OP_READDIR;
+  b->path = (char *) path;
+  b->data = buf;
+  b->filler = filler;
+
+  return bindings_call_ex(b, true);
+}
+#endif
 
 static int bindings_readlink (const char *path, char *buf, size_t len) {
   bindings_t *b = bindings_get_context();
@@ -323,6 +386,7 @@ static int bindings_readlink (const char *path, char *buf, size_t len) {
   return bindings_call(b);
 }
 
+#if FUSE_USE_VERSION < 30
 static int bindings_chown (const char *path, uid_t uid, gid_t gid) {
   bindings_t *b = bindings_get_context();
 
@@ -333,7 +397,21 @@ static int bindings_chown (const char *path, uid_t uid, gid_t gid) {
 
   return bindings_call(b);
 }
+#else
+static int bindings_chown (const char *path, uid_t uid, gid_t gid, struct fuse_file_info *fi) {
+  (void) fi;
+  bindings_t *b = bindings_get_context();
 
+  b->op = OP_CHOWN;
+  b->path = (char *) path;
+  b->uid = uid;
+  b->gid = gid;
+
+  return bindings_call(b);
+}
+#endif
+
+#if FUSE_USE_VERSION < 30
 static int bindings_chmod (const char *path, mode_t mode) {
   bindings_t *b = bindings_get_context();
 
@@ -343,6 +421,18 @@ static int bindings_chmod (const char *path, mode_t mode) {
 
   return bindings_call(b);
 }
+#else
+static int bindings_chmod (const char *path, mode_t mode, struct fuse_file_info *fi) {
+  (void) fi;
+  bindings_t *b = bindings_get_context();
+
+  b->op = OP_CHMOD;
+  b->path = (char *) path;
+  b->mode = mode;
+
+  return bindings_call(b);
+}
+#endif
 
 #ifdef __APPLE__
 static int bindings_setxattr (const char *path, const char *name, const char *value, size_t size, int flags, uint32_t position) {
@@ -520,6 +610,7 @@ static int bindings_create (const char *path, mode_t mode, struct fuse_file_info
   return bindings_call(b);
 }
 
+#if FUSE_USE_VERSION < 30
 static int bindings_utimens (const char *path, const struct timespec tv[2]) {
   bindings_t *b = bindings_get_context();
 
@@ -529,6 +620,18 @@ static int bindings_utimens (const char *path, const struct timespec tv[2]) {
 
   return bindings_call(b);
 }
+#else
+static int bindings_utimens (const char *path, const struct timespec tv[2], struct fuse_file_info *fi) {
+  (void) fi;
+  bindings_t *b = bindings_get_context();
+
+  b->op = OP_UTIMENS;
+  b->path = (char *) path;
+  b->data = (void *) tv;
+
+  return bindings_call(b);
+}
+#endif
 
 static int bindings_unlink (const char *path) {
   bindings_t *b = bindings_get_context();
@@ -539,6 +642,7 @@ static int bindings_unlink (const char *path) {
   return bindings_call(b);
 }
 
+#if FUSE_USE_VERSION < 30
 static int bindings_rename (const char *src, const char *dest) {
   bindings_t *b = bindings_get_context();
 
@@ -548,6 +652,20 @@ static int bindings_rename (const char *src, const char *dest) {
 
   return bindings_call(b);
 }
+#else
+static int bindings_rename (const char *src, const char *dest, unsigned int flags) {
+  if (flags != 0) {
+    return -EINVAL;
+  }
+  bindings_t *b = bindings_get_context();
+
+  b->op = OP_RENAME;
+  b->path = (char *) src;
+  b->data = (void *) dest;
+
+  return bindings_call(b);
+}
+#endif
 
 static int bindings_link (const char *path, const char *dest) {
   bindings_t *b = bindings_get_context();
@@ -588,7 +706,9 @@ static int bindings_rmdir (const char *path) {
   return bindings_call(b);
 }
 
+#if FUSE_USE_VERSION < 30
 static void* bindings_init (struct fuse_conn_info *conn) {
+  (void) conn;
   bindings_t *b = bindings_get_context();
 
   b->op = OP_INIT;
@@ -596,6 +716,18 @@ static void* bindings_init (struct fuse_conn_info *conn) {
   bindings_call(b);
   return b;
 }
+#else
+static void* bindings_init (struct fuse_conn_info *conn, struct fuse_config *cfg) {
+  (void) conn;
+  (void) cfg;
+  bindings_t *b = bindings_get_context();
+
+  b->op = OP_INIT;
+
+  bindings_call(b);
+  return b;
+}
+#endif
 
 static void bindings_destroy (void *data) {
   bindings_t *b = bindings_get_context();
@@ -662,10 +794,14 @@ static thread_fn_rtn_t bindings_thread (void *data) {
   struct fuse_operations ops = { };
 
   if (b->ops_access != NULL) ops.access = bindings_access;
-  if (b->ops_truncate != NULL) ops.truncate = bindings_truncate;
+  if (b->ops_truncate != NULL || b->ops_ftruncate != NULL) ops.truncate = bindings_truncate;
+#if FUSE_USE_VERSION < 30
   if (b->ops_ftruncate != NULL) ops.ftruncate = bindings_ftruncate;
-  if (b->ops_getattr != NULL) ops.getattr = bindings_getattr;
+#endif
+  if (b->ops_getattr != NULL || b->ops_fgetattr != NULL) ops.getattr = bindings_getattr;
+#if FUSE_USE_VERSION < 30
   if (b->ops_fgetattr != NULL) ops.fgetattr = bindings_fgetattr;
+#endif
   if (b->ops_flush != NULL) ops.flush = bindings_flush;
   if (b->ops_fsync != NULL) ops.fsync = bindings_fsync;
   if (b->ops_fsyncdir != NULL) ops.fsyncdir = bindings_fsyncdir;
@@ -703,6 +839,9 @@ static thread_fn_rtn_t bindings_thread (void *data) {
   };
 
   struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
+
+#if FUSE_USE_VERSION < 30
+  // FUSE 2.x path
   struct fuse_chan *ch = fuse_mount(b->mnt, &args);
 
   if (ch == NULL) {
@@ -726,6 +865,30 @@ static thread_fn_rtn_t bindings_thread (void *data) {
   fuse_unmount(b->mnt, ch);
   fuse_session_remove_chan(ch);
   fuse_destroy(fuse);
+#else
+  // FUSE 3.x path
+  struct fuse *fuse = fuse_new(&args, &ops, sizeof(struct fuse_operations), b);
+
+  if (fuse == NULL) {
+    b->op = OP_ERROR;
+    bindings_call(b);
+    uv_close((uv_handle_t*) &(b->async), &bindings_on_close);
+    return NULL;
+  }
+
+  if (fuse_mount(fuse, b->mnt) != 0) {
+    b->op = OP_ERROR;
+    bindings_call(b);
+    fuse_destroy(fuse);
+    uv_close((uv_handle_t*) &(b->async), &bindings_on_close);
+    return NULL;
+  }
+
+  fuse_loop(fuse);
+
+  fuse_unmount(fuse);
+  fuse_destroy(fuse);
+#endif
 
   uv_close((uv_handle_t*) &(b->async), &bindings_on_close);
 
@@ -792,7 +955,11 @@ public:
       fuse_fill_dir_t fillerToCall = b->filler;
       void *data = b->data;
       for (int i = 0; i < dirs_length; i++) {
+#if FUSE_USE_VERSION >= 30
+        fillerToCall(data, dirs[i], &empty_stat, 0, (enum fuse_fill_dir_flags) 0);
+#else
         fillerToCall(data, dirs[i], &empty_stat, 0);
+#endif
       }
     }
     void WorkComplete(){
@@ -914,7 +1081,7 @@ NAN_INLINE static void bindings_call_op (bindings_t *b, Nan::Callback *fn, int a
   bindings_call_op_ex(b, fn, argc, argv, false);
 }
 
-static void bindings_dispatch (uv_async_t* handle, int status) {
+static void bindings_dispatch (uv_async_t* handle) {
   Nan::HandleScope scope;
 
   bindings_t *b = bindings_current = (bindings_t *) handle->data;
@@ -1272,7 +1439,7 @@ NAN_METHOD(Mount) {
 
         semaphore_init(&(b->semaphore));
         semaphore_init(&(b->semaphore_readdir));
-        uv_async_init(uv_default_loop(), &(b->async), (uv_async_cb) bindings_dispatch);
+        uv_async_init(uv_default_loop(), &(b->async), bindings_dispatch);
         b->async.data = b;
 
         thread_create(&(b->thread), bindings_thread, b);
